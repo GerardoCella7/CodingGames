@@ -1,74 +1,44 @@
 class CheckPoints{
-    constructor(){
-        this.checkPoints = [];
-        this.complete = false;
-        this.turn = 1;
-        this.indexMaxDistance = null;
-        this.lastCheckPoint = null;
+    static #list = [];
+    static #completed = false;
+    constructor(info){
+        this.x = parseInt(info[2]); // x position of the next check point
+        this.y = parseInt(info[3]); // y position of the next check point
+        this.dist = parseInt(info[4]); // distance to the next checkpoint
+        this.angle = parseInt(info[5]); // angle between your pod orientation and the direction of the next checkpoint
     }
 
-    setCheckPoint(x, y){
-        const indexCP = this.checkPoints.findIndex(e => e.x === x && e.y === y);
-        if(indexCP < 0)
-            this.checkPoints.push({x: x, y: y});
-        else
-            this.lastCheckPoint = indexCP;
+    static addIntoList(ck){
+        if(this.#completed) return;
 
-        this.complete = this.checkPoints.length > 1 && indexCP === 0;
-
-        if(this.complete){
-            this.turn++;
-            this.findCheckPointMaxLongDistance();
-        }
+        const indexCK = this.getIndex(ck);
+        if(indexCK < 0)
+            this.#list.push(ck);
+        else if(indexCK===0 && this.#list.length > 1)
+            this.#completed = true;
     }
 
-    setNextTurn(x, y){
-        const indexCP = this.checkPoints.findIndex(e => e.x === x && e.y === y);
-        if(indexCP === 0 && this.lastCheckPoint != 0)
-            this.turn++;
-        
-        this.lastCheckPoint = indexCP;
+    static getIndex(ck){
+        return this.#list.findIndex(e => e.x === ck.x && e.y === ck.y);
     }
 
-    findCheckPointMaxLongDistance(){
-        const lst = [];
-        for(let i=0; i<this.checkPoints.length; i++){
-            const ckA = this.checkPoints[i];
-            const ckB = this.checkPoints[i+1 >= this.checkPoints.length ? 0 : i+1];
-            lst[i] = Math.abs(Math.sqrt(Math.pow(ckB.x - ckA.x) + Math.pow(ckB.y - ckA.y)));
-        }
-
-        this.indexMaxDistance = lst.findIndex(e => e == Math.max(...lst));
+    static get(index){
+        const len = this.#list.length;
+        return index < 0 || index > len-1 ? null : this.#list[index];
     }
 
-    isNextMaxDistance(x, y){
-        const indexCP = this.checkPoints.findIndex(e => e.x === x && e.y === y);
-        return indexCP === this.indexMaxDistance;
+    getDistanceMax(){
+        return this.dist;
     }
 }
 
-class Game{
-    constructor(){
-        this.checkPoints = new CheckPoints();
-        this.boost = {alreadyUse: false, inProgress: false};
-        this.lastTurn = 3;
-        this.proximity = false;
-        this.previousCheckpointDist = Infinity;
-        this.previousSpeed = 100;
-    }
-
-    setMyInfo(info){
+class Info {
+    static #list = [];
+    constructor(info){
         this.x = parseInt(info[0]);
         this.y = parseInt(info[1]);
-        this.nextCheckpointX = parseInt(info[2]); // x position of the next check point
-        this.nextCheckpointY = parseInt(info[3]); // y position of the next check point
-        this.nextCheckpointDist = parseInt(info[4]); // distance to the next checkpoint
-        this.nextCheckpointAngle = parseInt(info[5]); // angle between your pod orientation and the direction of the next checkpoint
-
-        if(!this.checkPoints.complete)
-            this.checkPoints.setCheckPoint(this.nextCheckpointX, this.nextCheckpointY);
-        else
-            this.checkPoints.setNextTurn(this.nextCheckpointX, this.nextCheckpointY);
+        this.ck = new CheckPoints(info);
+        CheckPoints.addIntoList(this.ck);
     }
 
     setOpponentInfo(info){
@@ -76,55 +46,103 @@ class Game{
         this.opponentY = parseInt(info[1]);
     }
 
-    getAction(){
-        let x = this.nextCheckpointX;
-        let y = this.nextCheckpointY;
-        let thrust = this.getThrust();
+    static addIntoList(info){
+        this.#list.push(info);
+    }
+}
 
-        // You have to output the target position
-        // followed by the power (0 <= thrust <= 100)
-        // i.e.: "x y thrust"
-        console.error(thrust);
-        return `${x} ${y} ${thrust}`;
+class Engine{
+    constructor(){
+        this.powerMax = 100;
+        this.powerMin = 20;
+        this.power = 100;
+        this.boost = {inUse: false, used: false};
+        this.shield = false;
+        this.brakeProgress = false;
+        this.accelerationProgress = true;
     }
 
-    getThrust(){
-        let t = (this.nextCheckpointAngle > 90 || this.nextCheckpointAngle < -90) ? 0 : 100;
-
-        if(!this.boost.alreadyUse && this.lastTurn === this.checkPoints.turn && this.checkPoints.isNextMaxDistance(this.nextCheckpointX, this.nextCheckpointY)){
-            if(this.boost.inProgress && t===100)
-                t = 'BOOST';
-            else if(this.boost.inProgress && t===0){
-                this.boost.inProgress = false;
-                this.boost.alreadyUse = true;
-            } else {
-                this.boost.inProgress = true;
-                t = 'BOOST';
-            }
-        } else if(this.boost.inProgress){
-            this.boost.inProgress = false;
-            this.boost.alreadyUse = true;
-        }
-
-        if(this.nextCheckpointDist < 3250 ){
-            t = this.proximate();
-        }
-
-        
-        return t;
+    brake(force, multiple = false){
+        if(force < 0 || (this.brakeProgress && !multiple)) return;
+        this.power -= force;
+        if(this.power < this.powerMin) this.power = this.powerMin;
+        this.brakeProgress = true;
+        this.accelerationProgress = false;
     }
 
-    proximate(){
-        let t = this.previousCheckpointDist > this.nextCheckpointDist ? 50 : 100;
-        this.previousCheckpointDist = this.nextCheckpointDist;
+    accelerate(force, multiple = false){
+        if(force < 0 || (this.accelerationProgress && !multiple)) return;
+        this.power += force;
+        if(this.power > this.powerMax) this.power = this.powerMax;
+        this.brakeProgress = false;
+        this.accelerationProgress = true;
+    }
 
-        if(this.proximity){
-            t =60;
-            return t;
+    stop(){
+        this.power = this.powerMin;
+        this.brakeProgress = true;
+        this.accelerationProgress = false;
+    }
+
+    useShield(){
+        this.shield = true;
+    }
+
+    resetShield(){
+        this.shield = false;
+    }
+
+    useBoost(){
+        if(this.boost.used) return;
+        this.boost.inUse = true;
+        this.boost.used = true;
+    }
+
+    endBoost(){
+        if(!this.boost.used) return;
+        this.boost.inUse = false
+    }
+
+    pilot(ck){
+        const indexCP = CheckPoints.getIndex(ck);
+        console.error(indexCP);
+        if( indexCP < 0) return;
+
+        const initialCK = CheckPoints.get(indexCP);
+        const distNextCKMax = initialCK.getDistanceMax();
+        const distNextCK = ck.dist;
+
+        console.error(distNextCK, distNextCKMax, this);
+
+        if(distNextCK < distNextCKMax / 1.6 && distNextCK < 4444){
+            this.brake(parseInt(distNextCK * .003), true);
         } else {
-            this.proximity = true;
-            return t;
+            this.accelerate(parseInt(distNextCK * .001), true);
         }
+
+        if(ck.angle > 90 || ck.angle < -90)
+            this.stop();
+    }
+}
+
+class Game{
+    constructor(){
+        this.info = null;
+        this.engine = new Engine();
+    }
+
+    setMyInfo(info){
+        this.info = new Info(info);
+    }
+
+    setOpponentInfo(info){
+        this.info.setOpponentInfo(info);
+        Info.addIntoList(this.info);
+    }
+
+    getAction(){
+        this.engine.pilot(this.info.ck);
+        return `${this.info.ck.x} ${this.info.ck.y} ${this.engine.power}`;
     }
 }
 
@@ -134,6 +152,6 @@ const game = new Game();
 while (true) {
     game.setMyInfo(readline().split(' '));
     game.setOpponentInfo(readline().split(' '));
-    // console.error(game);
+    //console.error(game);
     console.log(game.getAction());
 }
